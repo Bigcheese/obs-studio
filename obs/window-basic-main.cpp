@@ -658,6 +658,9 @@ OBSBasic::~OBSBasic()
 	if (properties)
 		delete properties;
 
+	if (filters)
+		delete filters;
+
 	if (transformWindow)
 		delete transformWindow;
 
@@ -765,6 +768,16 @@ void OBSBasic::CreatePropertiesWindow(obs_source_t *source)
 	properties = new OBSBasicProperties(this, source);
 	properties->Init();
 	properties->setAttribute(Qt::WA_DeleteOnClose, true);
+}
+
+void OBSBasic::CreateFiltersWindow(obs_source_t *source)
+{
+	if (filters)
+		filters->close();
+
+	filters = new OBSBasicFilters(this, source);
+	filters->Init();
+	filters->setAttribute(Qt::WA_DeleteOnClose, true);
 }
 
 /* Qt callbacks for invokeMethod */
@@ -1921,6 +1934,9 @@ void OBSBasic::on_sources_customContextMenuRequested(const QPoint &pos)
 		action->setEnabled(obs_source_get_output_flags(source) &
 				OBS_SOURCE_INTERACTION);
 
+		action = popup.addAction(QTStr("Filters"), this,
+				SLOT(OpenFilters()));
+
 		popup.addAction(QTStr("Properties"), this,
 				SLOT(on_actionSourceProperties_triggered()));
 	}
@@ -2267,6 +2283,14 @@ void OBSBasic::SceneItemNameEdited(QWidget *editor,
 	RenameListItem(this, ui->sources, source, text);
 
 	UNUSED_PARAMETER(endHint);
+}
+
+void OBSBasic::OpenFilters()
+{
+	OBSSceneItem item = GetCurrentSceneItem();
+	OBSSource source = obs_sceneitem_get_source(item);
+
+	CreateFiltersWindow(source);
 }
 
 void OBSBasic::StreamingStart()
