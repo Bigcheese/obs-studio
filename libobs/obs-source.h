@@ -267,6 +267,14 @@ struct obs_source_info {
 			struct obs_audio_data *audio);
 
 	/**
+	 * Called when the filter is removed from a source
+	 *
+	 * @param  data    Filter data
+	 * @param  source  Source that the filter being removed from
+	 */
+	void (*filter_remove)(void *data, obs_source_t *source);
+
+	/**
 	 * Called to enumerate all sources being used within this source.
 	 * If the source has children it must implement this callback.
 	 *
