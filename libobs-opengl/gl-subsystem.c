@@ -890,6 +890,8 @@ static void update_viewproj_matrix(struct gs_device *device)
 		glFrontFace(GL_CCW);
 	}
 
+	gl_success("glFrontFace");
+
 	matrix4_mul(&device->cur_viewproj, &device->cur_view,
 			&device->cur_proj);
 	matrix4_transpose(&device->cur_viewproj, &device->cur_viewproj);
