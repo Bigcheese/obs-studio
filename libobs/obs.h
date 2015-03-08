@@ -928,6 +928,12 @@ EXPORT uint32_t obs_source_get_base_width(obs_source_t *source);
 /** Gets the base height for a source (not taking in to account filtering) */
 EXPORT uint32_t obs_source_get_base_height(obs_source_t *source);
 
+/**
+ * Resets the async video cache of the source to reset the timing of new
+ * frames
+ */
+EXPORT void obs_source_reset_video_cache(obs_source_t *source);
+
 
 /* ------------------------------------------------------------------------- */
 /* Scenes */
