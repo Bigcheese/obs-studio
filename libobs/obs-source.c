@@ -2046,8 +2046,8 @@ void obs_source_process_filter(obs_source_t *filter, gs_effect_t *effect,
 	parent       = obs_filter_get_parent(filter);
 	target_flags = target->info.output_flags;
 	parent_flags = parent->info.output_flags;
-	cx           = obs_source_get_width(target);
-	cy           = obs_source_get_height(target);
+	cx           = get_base_width(target);
+	cy           = get_base_height(target);
 	use_matrix   = !!(target_flags & OBS_SOURCE_COLOR_MATRIX);
 
 	/* if the parent does not use any custom effects, and this is the last
