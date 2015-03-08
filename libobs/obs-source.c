@@ -2538,3 +2538,14 @@ obs_source_t *obs_source_get_filter_by_name(obs_source_t *source,
 
 	return filter;
 }
+
+void obs_source_reset_video_cache(obs_source_t *source)
+{
+	if (!source)
+		return;
+
+	pthread_mutex_lock(&source->async_mutex);
+	free_async_cache(source);
+	source->last_frame_ts = 0;
+	pthread_mutex_unlock(&source->async_mutex);
+}
