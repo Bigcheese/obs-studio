@@ -2070,7 +2070,10 @@ void obs_source_process_filter(obs_source_t *filter, gs_effect_t *effect,
 		gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
 		gs_ortho(0.0f, (float)cx, 0.0f, (float)cy, -100.0f, 100.0f);
 
-		obs_source_video_render(target);
+		if (target == parent)
+			obs_source_default_render(target, use_matrix);
+		else
+			obs_source_video_render(target);
 
 		gs_texrender_end(filter->filter_texrender);
 	}
