@@ -724,14 +724,16 @@ gs_effect_t *gs_effect_create(const char *effect_string, const char *filename,
 		effect = NULL;
 	}
 
-	pthread_mutex_lock(&thread_graphics->effect_mutex);
+	if (effect) {
+		pthread_mutex_lock(&thread_graphics->effect_mutex);
 
-	if (effect->effect_path) {
-		effect->next = thread_graphics->first_effect;
-		thread_graphics->first_effect = effect;
+		if (effect->effect_path) {
+			effect->next = thread_graphics->first_effect;
+			thread_graphics->first_effect = effect;
+		}
+
+		pthread_mutex_unlock(&thread_graphics->effect_mutex);
 	}
-
-	pthread_mutex_unlock(&thread_graphics->effect_mutex);
 
 	ep_free(&parser);
 	return effect;
