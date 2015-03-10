@@ -22,7 +22,7 @@ struct mask_filter_data {
 
 static const char *mask_filter_get_name(void)
 {
-	return obs_module_text("MaskFilter.Name");
+	return obs_module_text("MaskFilter");
 }
 
 static void mask_filter_update(void *data, obs_data_t *settings)
@@ -87,6 +87,11 @@ static void *mask_filter_create(obs_data_t *settings, obs_source_t *context)
 
 	bfree(effect_path);
 
+	if (!filter->effect) {
+		bfree(filter);
+		return NULL;
+	}
+
 	obs_source_update(context, settings);
 	return filter;
 }
@@ -113,14 +118,16 @@ static void mask_filter_render(void *data, gs_effect_t *effect)
 		return;
 	}
 
+	obs_source_process_filter_begin(filter->context, GS_RGBA,
+			OBS_ALLOW_DIRECT_RENDERING);
+
 	param = gs_effect_get_param_by_name(filter->effect, "mask");
 	gs_effect_set_texture(param, filter->mask);
 
 	param = gs_effect_get_param_by_name(filter->effect, "color");
 	gs_effect_set_vec4(param, &filter->color);
 
-	obs_source_process_filter(filter->context, filter->effect,
-			0, 0, GS_RGBA, OBS_ALLOW_DIRECT_RENDERING);
+	obs_source_process_filter_end(filter->context, filter->effect, 0, 0);
 
 	UNUSED_PARAMETER(effect);
 }

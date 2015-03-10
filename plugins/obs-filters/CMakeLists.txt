@@ -2,6 +2,11 @@ project(obs-filters)
 
 set(obs-filters_SOURCES
 	obs-filters.c
+	color-filter.c
+	async-delay-filter.c
+	crop-filter.c
+	chroma-key-filter.c
+	color-key-filter.c
 	mask-filter.c)
 
 add_library(obs-filters MODULE
