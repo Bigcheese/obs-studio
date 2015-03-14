@@ -431,6 +431,8 @@ static void xshm_video_render(void *vptr, gs_effect_t *effect)
 {
 	XSHM_DATA(vptr);
 
+	effect = obs_get_default_effect();
+
 	if (!data->texture)
 		return;
 
@@ -438,10 +440,13 @@ static void xshm_video_render(void *vptr, gs_effect_t *effect)
 	gs_effect_set_texture(image, data->texture);
 
 	gs_enable_blending(false);
-	gs_draw_sprite(data->texture, 0, 0, 0);
 
-	if (data->show_cursor)
-		xcb_xcursor_render(data->cursor);
+	while (gs_effect_loop(effect, "Draw")) {
+		gs_draw_sprite(data->texture, 0, 0, 0);
+
+		if (data->show_cursor)
+			xcb_xcursor_render(data->cursor);
+	}
 
 	gs_reset_blend_state();
 }

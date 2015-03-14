@@ -501,6 +501,7 @@ void XCompcapMain::tick(float seconds)
 void XCompcapMain::render(gs_effect_t *effect)
 {
 	PLock lock(&p->lock, true);
+	effect = obs_get_default_effect();
 
 	if (!lock.isLocked() || !p->tex)
 		return;
@@ -509,10 +510,14 @@ void XCompcapMain::render(gs_effect_t *effect)
 	gs_effect_set_texture(image, p->tex);
 
 	gs_enable_blending(false);
-	gs_draw_sprite(p->tex, 0, 0, 0);
 
-	if (p->cursor && p->gltex && p->show_cursor && !p->cursor_outside)
-		xcursor_render(p->cursor);
+	while (gs_effect_loop(effect, "Draw")) {
+		gs_draw_sprite(p->tex, 0, 0, 0);
+
+		if (p->cursor && p->gltex &&
+		    p->show_cursor && !p->cursor_outside)
+			xcursor_render(p->cursor);
+	}
 
 	gs_reset_blend_state();
 }
