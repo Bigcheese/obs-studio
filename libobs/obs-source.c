@@ -2063,6 +2063,9 @@ void obs_source_process_filter_begin(obs_source_t *filter,
 		filter->filter_texrender = gs_texrender_create(format,
 				GS_ZS_NONE);
 
+	gs_blend_state_push();
+	gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+
 	if (gs_texrender_begin(filter->filter_texrender, cx, cy)) {
 		bool custom_draw = (parent_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
 		bool async = (parent_flags & OBS_SOURCE_ASYNC) != 0;
@@ -2079,6 +2082,9 @@ void obs_source_process_filter_begin(obs_source_t *filter,
 
 		gs_texrender_end(filter->filter_texrender);
 	}
+
+	gs_blend_state_pop();
+
 }
 
 void obs_source_process_filter_end(obs_source_t *filter, gs_effect_t *effect,
