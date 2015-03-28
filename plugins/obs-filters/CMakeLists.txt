@@ -7,7 +7,8 @@ set(obs-filters_SOURCES
 	crop-filter.c
 	chroma-key-filter.c
 	color-key-filter.c
-	mask-filter.c)
+	mask-filter.c
+  deinterlace-filter.cpp)
 
 add_library(obs-filters MODULE
 	${obs-filters_SOURCES})
