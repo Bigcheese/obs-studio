@@ -1,10 +1,9 @@
-#include "media-io\format-conversion.h"
-
 #include <obs-module.h>
 #include <util/circlebuf.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <immintrin.h>
 
 #ifndef SEC_TO_NSEC
@@ -178,69 +177,118 @@ inline void filter_line_c(int mode, Comp *dst, const Comp *prev, const Comp *cur
     }
 }
 
-typedef unsigned char c16 __attribute__((ext_vector_type(16)));
-typedef short s16 __attribute__((ext_vector_type(16)));
-
-static s16 loads(const std::uint8_t *__restrict addr) {
-  return __builtin_convertvector(*(const c16 *)addr, s16);
+#if defined(__AVX2__) || defined(_MSC_VER)
+static __m256i avg_16(__m256i a, __m256i b) {
+  return _mm256_avg_epu16(a, b);
+}
+#endif
+#if defined(__SSE4_1__) || defined(_MSC_VER)
+static __m128i avg_16(__m128i a, __m128i b) {
+  return _mm_avg_epu16(a, b);
 }
 
-static s16 abs_diff(s16 a, s16 b) {
-  return _mm256_abs_epi16(a - b);
+static __m128i abs_i16(__m128i a) {
+  return _mm_abs_epi16(a);
 }
 
-static s16 avg_of_abs_diff(s16 a, s16 b) {
-  return abs_diff(a, b) >> 1; 
+static __m128i add_i16(__m128i a, __m128i b) {
+  return _mm_add_epi16(a, b);
 }
 
-static s16 calc_spatial_score(const std::uint8_t *cur, int pitch, int j) {
-  s16 cur_above_behind = loads(cur - pitch - 1 + j);
-  s16 cur_above = loads(cur - pitch + j);
-  s16 cur_above_forward = loads(cur - pitch + 1 + j);
-  s16 cur_below_behind = loads(cur + pitch - 1 - j);
-  s16 cur_below = loads(cur + pitch - j);
-  s16 cur_below_forward = loads(cur + pitch + 1 - j);
-  return abs_diff(cur_above_behind, cur_below_behind) +
-         abs_diff(cur_above, cur_below) +
-         abs_diff(cur_above_forward, cur_below_forward);
+static __m128i sub_i16(__m128i a, __m128i b) {
+  return _mm_sub_epi16(a, b);
 }
 
-static s16 clamp(s16 val, s16 max, s16 min) {
-  return _mm256_min_epi16(_mm256_max_epi16(val, min), max);
+static __m128i min_i16(__m128i a, __m128i b) {
+  return _mm_min_epi16(a, b);
 }
 
-static s16 calc_spatial_pred(const std::uint8_t *cur, int pitch, int j) {
-  return _mm256_avg_epu16(loads(cur - pitch + j), loads(cur + pitch - j));
+static __m128i max_i16(__m128i a, __m128i b) {
+  return _mm_max_epi16(a, b);
 }
 
+static __m128i half_16(__m128i a) {
+  return _mm_srai_epi16(a, 1);
+}
+
+static __m128i load_8_16(const std::uint8_t *__restrict addr) {
+  return _mm_cvtepu8_epi16(_mm_loadu_si128((const __m128i *)addr));
+}
+
+static void store_8_16(std::uint8_t *__restrict addr, __m128i value) {
+#ifdef __clang
+  typedef unsigned char c8 __attribute__((ext_vector_type(8)));
+  typedef short s8 __attribute__((ext_vector_type(8)));
+  *(c8 *)addr = __builtin_convertvector(s8(value), c8);
+#else
+  __m128i blah = _mm_shuffle_epi8(value, _mm_set_epi8(0, 0, 0, 0, 0, 0, 0, 0, 14, 12, 10, 8, 6, 4, 2, 0));
+  *(std::uint64_t *)(addr) = *(std::uint64_t *)&blah;
+#endif
+}
+#endif
+
+template <typename T>
+T abs_diff_i16(T a, T b) {
+  return abs_i16(sub_i16(a, b));
+}
+
+template <typename T>
+static T avg_of_abs_diff(T a, T b) {
+  return half_16(abs_diff_i16(a, b)); 
+}
+
+template <typename T>
+T calc_spatial_score(const std::uint8_t *cur, int pitch, int j) {
+  T cur_above_behind = load_8_16(cur - pitch - 1 + j);
+  T cur_above = load_8_16(cur - pitch + j);
+  T cur_above_forward = load_8_16(cur - pitch + 1 + j);
+  T cur_below_behind = load_8_16(cur + pitch - 1 - j);
+  T cur_below = load_8_16(cur + pitch - j);
+  T cur_below_forward = load_8_16(cur + pitch + 1 - j);
+  return add_i16(abs_diff_i16(cur_above_behind, cur_below_behind),
+                 add_i16(abs_diff_i16(cur_above, cur_below), 
+                         abs_diff_i16(cur_above_forward, cur_below_forward)));
+}
+
+template <typename T>
+T clamp(T val, T max, T min) {
+  return min_i16(max_i16(val, min), max);
+}
+
+template <typename T>
+T calc_spatial_pred(const std::uint8_t *cur, int pitch, int j) {
+  return avg_16(load_8_16(cur - pitch + j), load_8_16(cur + pitch - j));
+}
+
+template <typename T>
 static void filter_line_c(int mode, std::uint8_t *__restrict dst, const std::uint8_t *__restrict prev, const std::uint8_t *__restrict cur, const std::uint8_t *__restrict next, int width, long pitch, int parity) {
     const std::uint8_t *prev2 = parity ? prev : cur ;
     const std::uint8_t *next2 = parity ? cur  : next;
 
-    for (int x = 0; x < width; x += sizeof(__m128i)) {
-      s16 c_above = loads(cur - pitch);
-      s16 c_below = loads(cur + pitch);
-      s16 c_before =loads(prev2);
-      s16 c_after = loads(next2);
-      s16 d = _mm256_avg_epu16(c_before, c_after);
-      s16 temporal_diff0 = avg_of_abs_diff(c_before, c_after);
-      s16 c_prev_above = loads(prev + pitch);
-      s16 c_prev_below = loads(prev - pitch);
-      s16 c_next_above = loads(next + pitch);
-      s16 c_next_below = loads(next - pitch);
-      s16 temporal_diff1 = _mm256_avg_epu16(abs_diff(c_prev_above, c_above), abs_diff(c_prev_below, c_below));
-      s16 temporal_diff2 = _mm256_avg_epu16(abs_diff(c_next_above, c_above), abs_diff(c_next_below, c_below));
-      s16 diff = _mm256_max_epi16(_mm256_max_epi16(temporal_diff0, temporal_diff1), temporal_diff2);
-      s16 spatial_pred = _mm256_avg_epu16(c_above, c_below);
-      s16 spatial_score = calc_spatial_score(cur, pitch, 0) - 1;
+    for (int x = 0; x < width; x += sizeof(T) / 2) {
+      T c_above = load_8_16(cur - pitch);
+      T c_below = load_8_16(cur + pitch);
+      T c_before =load_8_16(prev2);
+      T c_after = load_8_16(next2);
+      T d = avg_16(c_before, c_after);
+      T temporal_diff0 = avg_of_abs_diff(c_before, c_after);
+      T c_prev_above = load_8_16(prev + pitch);
+      T c_prev_below = load_8_16(prev - pitch);
+      T c_next_above = load_8_16(next + pitch);
+      T c_next_below = load_8_16(next - pitch);
+      T temporal_diff1 = avg_16(abs_diff_i16(c_prev_above, c_above), abs_diff_i16(c_prev_below, c_below));
+      T temporal_diff2 = avg_16(abs_diff_i16(c_next_above, c_above), abs_diff_i16(c_next_below, c_below));
+      T diff = max_i16(max_i16(temporal_diff0, temporal_diff1), temporal_diff2);
+      T spatial_pred = avg_16(c_above, c_below);
+      T spatial_score = sub_i16(calc_spatial_score<T>(cur, pitch, 0), _mm_set1_epi16(1));
       
 #define CHECK(j)\
       {\
-        s16 score = calc_spatial_score(cur, pitch, j);\
-        s16 new_spatial_pred = calc_spatial_pred(cur, pitch, j);\
-        s16 mask = _mm256_cmpgt_epi16(spatial_score, score);\
-        score = _mm256_blendv_epi8(spatial_score, score, mask);\
-        spatial_pred = _mm256_blendv_epi8(spatial_pred, new_spatial_pred, mask);\
+        T score = calc_spatial_score<T>(cur, pitch, j);\
+        T new_spatial_pred = calc_spatial_pred<T>(cur, pitch, j);\
+        T mask = _mm_cmpgt_epi16(spatial_score, score);\
+        score = _mm_blendv_epi8(spatial_score, score, mask);\
+        spatial_pred = _mm_blendv_epi8(spatial_pred, new_spatial_pred, mask);\
       }
 
       CHECK(-1)
@@ -248,26 +296,26 @@ static void filter_line_c(int mode, std::uint8_t *__restrict dst, const std::uin
       CHECK(1)
       CHECK(2)
 
-      s16 b = _mm256_avg_epu16(loads(prev2 - 2 * pitch), loads(next2 - 2 * pitch));
-      s16 f = _mm256_avg_epu16(loads(prev2 + 2 * pitch), loads(next2 + 2 * pitch));
+      T b = avg_16(load_8_16(prev2 - 2 * pitch), load_8_16(next2 - 2 * pitch));
+      T f = avg_16(load_8_16(prev2 + 2 * pitch), load_8_16(next2 + 2 * pitch));
       
-      s16 max = _mm256_max_epu16(_mm256_max_epu16(d - c_below, d - c_above), _mm256_min_epu16(b - c_above, f - c_below));
-      s16 min = _mm256_min_epu16(_mm256_min_epu16(d - c_below, d - c_above), _mm256_max_epu16(b - c_above, f - c_below));
+      T max = max_i16(max_i16(sub_i16(d, c_below), sub_i16(d, c_above)), min_i16(sub_i16(b, c_above), sub_i16(f, c_below)));
+      T min = min_i16(min_i16(sub_i16(d, c_below), sub_i16(d, c_above)), max_i16(sub_i16(b, c_above), sub_i16(f, c_below)));
       
-      diff = _mm256_max_epu16(_mm256_max_epu16(diff, min), -max);
+      diff = max_i16(max_i16(diff, min), sub_i16(_mm_set1_epi16(0) , max));
       
-      s16 dpdiff = _mm256_add_epi16(d, diff);
-      s16 dmdiff = _mm256_sub_epi16(d, diff);
+      T dpdiff = add_i16(d, diff);
+      T dmdiff = sub_i16(d, diff);
       spatial_pred = clamp(spatial_pred, dpdiff, dmdiff);
       
-      _mm_storeu_si128((__m128i *)cur, __builtin_convertvector(spatial_pred, c16));
+      store_8_16(dst, spatial_pred);
       
-      dst += sizeof(__m128i);
-      prev += sizeof(__m128i);
-      cur += sizeof(__m128i);
-      next += sizeof(__m128i);
-      prev2 += sizeof(__m128i);
-      next2 += sizeof(__m128i);
+      dst += sizeof(T) / 2;
+      prev += sizeof(T) / 2;
+      cur += sizeof(T) / 2;
+      next += sizeof(T) / 2;
+      prev2 += sizeof(T) / 2;
+      next2 += sizeof(T) / 2;
     }
 }
 
@@ -315,7 +363,7 @@ static void filter_plane(int mode, Comp *dst, long dst_stride, const Comp *prev0
             Comp *dst2= dst + y*dst_stride;
 
             for(int k=0;k<ch;k++)
-                filter_line_c(mode, dst2+k, prev+k, cur+k, next+k, w, refs, (parity ^ tff));
+                filter_line_c<__m128i>(mode, dst2+k, prev+k, cur+k, next+k, w, refs, (parity ^ tff));
         }else{
             memcpy(dst + y*dst_stride, cur0 + y*refs, w*ch*sizeof(Comp)); // copy original
         }
@@ -362,13 +410,16 @@ static void deinterlace_frame(obs_source_frame *dst,
 	case VIDEO_FORMAT_I420:
 
     //deinterlace_plane(dst->data[0], src->data[0], src->linesize[0], src->height);
-    deinterlace_plane(dst->data[1], cur->data[1], cur->linesize[1], cur->height / 2);
-    deinterlace_plane(dst->data[2], cur->data[2], cur->linesize[2], cur->height / 2);
+    filter_plane<1, unsigned char, int>(0, dst->data[1], dst->linesize[1], prev->data[1], cur->data[1], next->data[1], cur->linesize[1], cur->width, cur->height / 2, 0, 0);
+    filter_plane<1, unsigned char, int>(0, dst->data[2], dst->linesize[2], prev->data[2], cur->data[2], next->data[2], cur->linesize[2], cur->width, cur->height / 2, 0, 0);
+    //deinterlace_plane(dst->data[1], cur->data[1], cur->linesize[1], cur->height / 2);
+    //deinterlace_plane(dst->data[2], cur->data[2], cur->linesize[2], cur->height / 2);
 		break;
 
 	case VIDEO_FORMAT_NV12:
     //deinterlace_plane(dst->data[0], src->data[0], src->linesize[0], src->height);
-    deinterlace_plane(dst->data[1], cur->data[1], cur->linesize[1], cur->height / 2);
+    //deinterlace_plane(dst->data[1], cur->data[1], cur->linesize[1], cur->height / 2);
+    filter_plane<1, unsigned char, int>(0, dst->data[1], dst->linesize[1], prev->data[1], cur->data[1], next->data[1], cur->linesize[1], cur->width, cur->height / 2, 0, 0);
 		break;
 
 	case VIDEO_FORMAT_YVYU:
