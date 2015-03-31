@@ -4,6 +4,8 @@
 #include <util/circlebuf.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <immintrin.h>
 
 #ifndef SEC_TO_NSEC
 #define SEC_TO_NSEC 1000000000ULL
@@ -121,46 +123,41 @@ inline int one1(unsigned char *) { return 1; }
 inline float one1(float *) { return 1.0f/256.0f; }
 
 template<int ch,typename Comp,typename Diff>
-inline void filter_line_c(int mode, Comp *dst, const Comp *prev, const Comp *cur, const Comp *next, int w, long refs, int parity){
-    int x;
-    const Comp *prev2= parity ? prev : cur ;
-    const Comp *next2= parity ? cur  : next;
+inline void filter_line_c(int mode, Comp *dst, const Comp *prev, const Comp *cur, const Comp *next, int width, long pitch, int parity){
+    const Comp *prev2 = parity ? prev : cur ;
+    const Comp *next2 = parity ? cur  : next;
 
-    for(x=0; x<w; x++){
-        Diff c= cur[-refs];
-        Diff d= halven(prev2[0] + next2[0]);
-        Diff e= cur[+refs];
-        Diff temporal_diff0= ABS(prev2[0] - next2[0]);
-        Diff temporal_diff1=halven( ABS(prev[-refs] - c) + ABS(prev[+refs] - e) );
-        Diff temporal_diff2=halven( ABS(next[-refs] - c) + ABS(next[+refs] - e) );
-        Diff diff= MAX3(halven(temporal_diff0), temporal_diff1, temporal_diff2);
-        Diff spatial_pred= halven(c+e);
-        Diff spatial_score= ABS(cur[-refs-ch] - cur[+refs-ch]) + ABS(c-e)
-                          + ABS(cur[-refs+ch] - cur[+refs+ch]) - one1((Comp*)0);
+    for(int x = 0; x < width; ++x){
+        Diff c_above = cur[-pitch];
+        Diff d = halven(prev2[0] + next2[0]);
+        Diff c_below = cur[+pitch];
+        Diff temporal_diff0=halven( ABS(prev2[0] - next2[0]) );
+        Diff temporal_diff1=halven( ABS(prev[-pitch] - c_above) + ABS(prev[+pitch] - c_below) );
+        Diff temporal_diff2=halven( ABS(next[-pitch] - c_above) + ABS(next[+pitch] - c_below) );
+        Diff diff= MAX3(temporal_diff0, temporal_diff1, temporal_diff2);
+        Diff spatial_pred= halven(c_above + c_below);
+        Diff spatial_score = ABS(cur[-pitch - ch] - cur[+pitch - ch])
+                           + ABS(c_above - c_below)
+                           + ABS(cur[-pitch + ch] - cur[+pitch + ch])
+                           - one1((Comp*)0);
 
 #define CHECK(j)\
-    {   Diff score= ABS(cur[-refs-ch+ j] - cur[+refs-ch- j])\
-                 + ABS(cur[-refs   + j] - cur[+refs   - j])\
-                 + ABS(cur[-refs+ch+ j] - cur[+refs+ch- j]);\
+    {   Diff score= ABS(cur[-pitch-ch+ j] - cur[+pitch-ch- j])\
+                 + ABS(cur[-pitch   + j] - cur[+pitch   - j])\
+                 + ABS(cur[-pitch+ch+ j] - cur[+pitch+ch- j]);\
         if(score < spatial_score){\
             spatial_score= score;\
-            spatial_pred= halven(cur[-refs  + j] + cur[+refs  - j]);\
+            spatial_pred= halven(cur[-pitch  + j] + cur[+pitch  - j]);\
 
         CHECK(-ch) CHECK(-(ch*2)) }} }}
         CHECK( ch) CHECK( (ch*2)) }} }}
 
         if(mode<2){
-            Diff b= halven(prev2[-2*refs] + next2[-2*refs]);
-            Diff f= halven(prev2[+2*refs] + next2[+2*refs]);
-#if 0
-            Diff a= cur[-3*refs];
-            Diff g= cur[+3*refs];
-            Diff max= MAX3(d-e, d-c, MIN3(MAX(b-c,f-e),MAX(b-c,b-a),MAX(f-g,f-e)) );
-            Diff min= MIN3(d-e, d-c, MAX3(MIN(b-c,f-e),MIN(b-c,b-a),MIN(f-g,f-e)) );
-#else
-            Diff max= MAX3(d-e, d-c, MIN(b-c, f-e));
-            Diff min= MIN3(d-e, d-c, MAX(b-c, f-e));
-#endif
+            Diff b= halven(prev2[-2*pitch] + next2[-2*pitch]);
+            Diff f= halven(prev2[+2*pitch] + next2[+2*pitch]);
+
+            Diff max= MAX3(d-c_below, d-c_above, MIN(b-c_above, f-c_below));
+            Diff min= MIN3(d-c_below, d-c_above, MAX(b-c_above, f-c_below));
 
             diff= MAX3(diff, min, -max);
         }
@@ -169,7 +166,7 @@ inline void filter_line_c(int mode, Comp *dst, const Comp *prev, const Comp *cur
            spatial_pred = d + diff;
         else if(spatial_pred < d - diff)
            spatial_pred = d - diff;
-
+        
         dst[0] = (Comp)spatial_pred;
 
         dst+=ch;
@@ -178,6 +175,99 @@ inline void filter_line_c(int mode, Comp *dst, const Comp *prev, const Comp *cur
         next+=ch;
         prev2+=ch;
         next2+=ch;
+    }
+}
+
+typedef unsigned char c16 __attribute__((ext_vector_type(16)));
+typedef short s16 __attribute__((ext_vector_type(16)));
+
+static s16 loads(const std::uint8_t *__restrict addr) {
+  return __builtin_convertvector(*(const c16 *)addr, s16);
+}
+
+static s16 abs_diff(s16 a, s16 b) {
+  return _mm256_abs_epi16(a - b);
+}
+
+static s16 avg_of_abs_diff(s16 a, s16 b) {
+  return abs_diff(a, b) >> 1; 
+}
+
+static s16 calc_spatial_score(const std::uint8_t *cur, int pitch, int j) {
+  s16 cur_above_behind = loads(cur - pitch - 1 + j);
+  s16 cur_above = loads(cur - pitch + j);
+  s16 cur_above_forward = loads(cur - pitch + 1 + j);
+  s16 cur_below_behind = loads(cur + pitch - 1 - j);
+  s16 cur_below = loads(cur + pitch - j);
+  s16 cur_below_forward = loads(cur + pitch + 1 - j);
+  return abs_diff(cur_above_behind, cur_below_behind) +
+         abs_diff(cur_above, cur_below) +
+         abs_diff(cur_above_forward, cur_below_forward);
+}
+
+static s16 clamp(s16 val, s16 max, s16 min) {
+  return _mm256_min_epi16(_mm256_max_epi16(val, min), max);
+}
+
+static s16 calc_spatial_pred(const std::uint8_t *cur, int pitch, int j) {
+  return _mm256_avg_epu16(loads(cur - pitch + j), loads(cur + pitch - j));
+}
+
+static void filter_line_c(int mode, std::uint8_t *__restrict dst, const std::uint8_t *__restrict prev, const std::uint8_t *__restrict cur, const std::uint8_t *__restrict next, int width, long pitch, int parity) {
+    const std::uint8_t *prev2 = parity ? prev : cur ;
+    const std::uint8_t *next2 = parity ? cur  : next;
+
+    for (int x = 0; x < width; x += sizeof(__m128i)) {
+      s16 c_above = loads(cur - pitch);
+      s16 c_below = loads(cur + pitch);
+      s16 c_before =loads(prev2);
+      s16 c_after = loads(next2);
+      s16 d = _mm256_avg_epu16(c_before, c_after);
+      s16 temporal_diff0 = avg_of_abs_diff(c_before, c_after);
+      s16 c_prev_above = loads(prev + pitch);
+      s16 c_prev_below = loads(prev - pitch);
+      s16 c_next_above = loads(next + pitch);
+      s16 c_next_below = loads(next - pitch);
+      s16 temporal_diff1 = _mm256_avg_epu16(abs_diff(c_prev_above, c_above), abs_diff(c_prev_below, c_below));
+      s16 temporal_diff2 = _mm256_avg_epu16(abs_diff(c_next_above, c_above), abs_diff(c_next_below, c_below));
+      s16 diff = _mm256_max_epi16(_mm256_max_epi16(temporal_diff0, temporal_diff1), temporal_diff2);
+      s16 spatial_pred = _mm256_avg_epu16(c_above, c_below);
+      s16 spatial_score = calc_spatial_score(cur, pitch, 0) - 1;
+      
+#define CHECK(j)\
+      {\
+        s16 score = calc_spatial_score(cur, pitch, j);\
+        s16 new_spatial_pred = calc_spatial_pred(cur, pitch, j);\
+        s16 mask = _mm256_cmpgt_epi16(spatial_score, score);\
+        score = _mm256_blendv_epi8(spatial_score, score, mask);\
+        spatial_pred = _mm256_blendv_epi8(spatial_pred, new_spatial_pred, mask);\
+      }
+
+      CHECK(-1)
+      CHECK(-2)
+      CHECK(1)
+      CHECK(2)
+
+      s16 b = _mm256_avg_epu16(loads(prev2 - 2 * pitch), loads(next2 - 2 * pitch));
+      s16 f = _mm256_avg_epu16(loads(prev2 + 2 * pitch), loads(next2 + 2 * pitch));
+      
+      s16 max = _mm256_max_epu16(_mm256_max_epu16(d - c_below, d - c_above), _mm256_min_epu16(b - c_above, f - c_below));
+      s16 min = _mm256_min_epu16(_mm256_min_epu16(d - c_below, d - c_above), _mm256_max_epu16(b - c_above, f - c_below));
+      
+      diff = _mm256_max_epu16(_mm256_max_epu16(diff, min), -max);
+      
+      s16 dpdiff = _mm256_add_epi16(d, diff);
+      s16 dmdiff = _mm256_sub_epi16(d, diff);
+      spatial_pred = clamp(spatial_pred, dpdiff, dmdiff);
+      
+      _mm_storeu_si128((__m128i *)cur, __builtin_convertvector(spatial_pred, c16));
+      
+      dst += sizeof(__m128i);
+      prev += sizeof(__m128i);
+      cur += sizeof(__m128i);
+      next += sizeof(__m128i);
+      prev2 += sizeof(__m128i);
+      next2 += sizeof(__m128i);
     }
 }
 
@@ -225,7 +315,7 @@ static void filter_plane(int mode, Comp *dst, long dst_stride, const Comp *prev0
             Comp *dst2= dst + y*dst_stride;
 
             for(int k=0;k<ch;k++)
-                filter_line_c<ch,Comp,Diff>(mode, dst2+k, prev+k, cur+k, next+k, w, refs, (parity ^ tff));
+                filter_line_c(mode, dst2+k, prev+k, cur+k, next+k, w, refs, (parity ^ tff));
         }else{
             memcpy(dst + y*dst_stride, cur0 + y*refs, w*ch*sizeof(Comp)); // copy original
         }
@@ -264,6 +354,8 @@ static void deinterlace_frame(obs_source_frame *dst,
 		memcpy(dst->color_range_max, cur->color_range_max, size);
 	}
 
+  
+  //deinterlace_plane(dst->data[0], cur->data[0], cur->linesize[0], cur->height);
   filter_plane<1, unsigned char, int>(0, dst->data[0], dst->linesize[0], prev->data[0], cur->data[0], next->data[0], cur->linesize[0], cur->width, cur->height, 0, 0);
 
 	switch (cur->format) {
