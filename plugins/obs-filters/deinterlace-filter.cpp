@@ -64,6 +64,9 @@ static void *deinterlace_filter_create(obs_data_t *settings,
 
 	filter->context = context;
   circlebuf_reserve(&filter->video_frames, 3 * sizeof(struct obs_source_frame*));
+  for (int i = 0; i < MAX_AV_PLANES; ++i) {
+    filter->output_frame.data[i] = 0;
+  }
 	deinterlace_filter_update(filter, settings);
 
 	return filter;
@@ -73,6 +76,10 @@ static void deinterlace_filter_destroy(void *data)
 {
 	deinterlace_data *filter = (deinterlace_data *)data;
 
+  /*
+  bfree(filter->output_frame.data[0]);
+  filter->output_frame.data[0] = nullptr;
+  */
 	circlebuf_free(&filter->video_frames);
 	bfree(data);
 }
@@ -446,6 +453,7 @@ static struct obs_source_frame *deinterlace_filter_video(void *data,
 
 	if (filter->reset_video) {
     bfree(filter->output_frame.data[0]);
+    filter->output_frame.data[0] = nullptr;
     obs_source_frame_init(&filter->output_frame, frame->format, frame->width, frame->height);
 		free_video_data(filter, parent);
 		filter->reset_video = false;
