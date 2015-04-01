@@ -415,17 +415,11 @@ static void deinterlace_frame(obs_source_frame *dst,
 
 	switch (cur->format) {
 	case VIDEO_FORMAT_I420:
-
-    //deinterlace_plane(dst->data[0], src->data[0], src->linesize[0], src->height);
     filter_plane<1, unsigned char, int>(0, dst->data[1], dst->linesize[1], prev->data[1], cur->data[1], next->data[1], cur->linesize[1], cur->width, cur->height / 2, 0, 0);
     filter_plane<1, unsigned char, int>(0, dst->data[2], dst->linesize[2], prev->data[2], cur->data[2], next->data[2], cur->linesize[2], cur->width, cur->height / 2, 0, 0);
-    //deinterlace_plane(dst->data[1], cur->data[1], cur->linesize[1], cur->height / 2);
-    //deinterlace_plane(dst->data[2], cur->data[2], cur->linesize[2], cur->height / 2);
 		break;
 
 	case VIDEO_FORMAT_NV12:
-    //deinterlace_plane(dst->data[0], src->data[0], src->linesize[0], src->height);
-    //deinterlace_plane(dst->data[1], cur->data[1], cur->linesize[1], cur->height / 2);
     filter_plane<1, unsigned char, int>(0, dst->data[1], dst->linesize[1], prev->data[1], cur->data[1], next->data[1], cur->linesize[1], cur->width, cur->height / 2, 0, 0);
 		break;
 
