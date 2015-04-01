@@ -279,10 +279,10 @@ static void filter_line_c(int mode, std::uint8_t *__restrict dst, const std::uin
       T c_after = load_8_16(next2);
       T d = avg_16(c_before, c_after);
       T temporal_diff0 = avg_of_abs_diff(c_before, c_after);
-      T c_prev_above = load_8_16(prev + pitch);
-      T c_prev_below = load_8_16(prev - pitch);
-      T c_next_above = load_8_16(next + pitch);
-      T c_next_below = load_8_16(next - pitch);
+      T c_prev_above = load_8_16(prev - pitch);
+      T c_prev_below = load_8_16(prev + pitch);
+      T c_next_above = load_8_16(next - pitch);
+      T c_next_below = load_8_16(next + pitch);
       T temporal_diff1 = avg_16(abs_diff_i16(c_prev_above, c_above), abs_diff_i16(c_prev_below, c_below));
       T temporal_diff2 = avg_16(abs_diff_i16(c_next_above, c_above), abs_diff_i16(c_next_below, c_below));
       T diff = max_i16(max_i16(temporal_diff0, temporal_diff1), temporal_diff2);
@@ -294,7 +294,7 @@ static void filter_line_c(int mode, std::uint8_t *__restrict dst, const std::uin
         T score = calc_spatial_score<T>(cur, pitch, j);\
         T new_spatial_pred = calc_spatial_pred<T>(cur, pitch, j);\
         T mask = _mm_cmpgt_epi16(spatial_score, score);\
-        score = _mm_blendv_epi8(spatial_score, score, mask);\
+        spatial_score = _mm_blendv_epi8(spatial_score, score, mask);\
         spatial_pred = _mm_blendv_epi8(spatial_pred, new_spatial_pred, mask);\
       }
 
